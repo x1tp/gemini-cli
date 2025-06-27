@@ -210,22 +210,10 @@ export async function convertToFunctionResponse(
   );
 }
 
-const createErrorResponse = async (
+const createErrorResponse = (
   request: ToolCallRequestInfo,
   error: Error,
-  geminiClient?: GeminiClient,
-  abortSignal?: AbortSignal,
-): Promise<ToolCallResponseInfo> => {
-  const summarizedContent =
-    geminiClient && abortSignal
-      ? await summarizeToolOutput(
-          error.message,
-          geminiClient,
-          abortSignal,
-          (length = 1000),
-        )
-      : null;
-
+): ToolCallResponseInfo => {
   return {
     callId: request.callId,
     error,
@@ -233,10 +221,10 @@ const createErrorResponse = async (
       functionResponse: {
         id: request.callId,
         name: request.name,
-        response: { error: summarizedContent || error.message },
+        response: { error: error.message },
       },
     },
-    resultDisplay: summarizedContent || error.message,
+    resultDisplay: error.message,
   };
 };
 
@@ -448,35 +436,31 @@ export class CoreToolScheduler {
         'Cannot schedule new tool calls while other tool calls are actively running (executing or awaiting approval).',
       );
     }
-    console.log("CALLING SCHEDULE")
     const requestsToProcess = Array.isArray(request) ? request : [request];
     const toolRegistry = await this.toolRegistry;
-
-    const newToolCallsPromises: Array<Promise<ToolCall>> =
-      requestsToProcess.map(async (reqInfo): Promise<ToolCall> => {
+    const newToolCalls: ToolCall[] = requestsToProcess.map(
+      (reqInfo): ToolCall => {
         const toolInstance = toolRegistry.getTool(reqInfo.name);
         if (!toolInstance) {
           return {
             status: 'error',
             request: reqInfo,
-            response: await createErrorResponse(
+            response: createErrorResponse(
               reqInfo,
               new Error(`Tool "${reqInfo.name}" not found in registry.`),
-              this.config.getGeminiClient(),
-              signal,
             ),
             durationMs: 0,
           };
         }
+
         return {
           status: 'validating',
           request: reqInfo,
           tool: toolInstance,
           startTime: Date.now(),
         };
-      });
-    const newToolCalls = await Promise.all(newToolCallsPromises);
-
+      },
+    );
     this.toolCalls = this.toolCalls.concat(newToolCalls);
     this.notifyToolCallsUpdate();
 
@@ -485,8 +469,7 @@ export class CoreToolScheduler {
         continue;
       }
 
-      const { request: reqInfo, tool: toolInstance } =
-        toolCall as ValidatingToolCall;
+      const { request: reqInfo, tool: toolInstance } = toolCall;
       try {
         if (this.approvalMode === ApprovalMode.YOLO) {
           this.setStatusInternal(reqInfo.callId, 'scheduled');
@@ -495,7 +478,6 @@ export class CoreToolScheduler {
             reqInfo.args,
             signal,
           );
-
           if (confirmationDetails) {
             const originalOnConfirm = confirmationDetails.onConfirm;
             const wrappedConfirmationDetails: ToolCallConfirmationDetails = {
@@ -521,11 +503,9 @@ export class CoreToolScheduler {
         this.setStatusInternal(
           reqInfo.callId,
           'error',
-          await createErrorResponse(
+          createErrorResponse(
             reqInfo,
             error instanceof Error ? error : new Error(String(error)),
-            this.config.getGeminiClient(),
-            signal,
           ),
         );
       }
@@ -666,13 +646,11 @@ export class CoreToolScheduler {
             this.setStatusInternal(
               callId,
               'error',
-              await createErrorResponse(
+              createErrorResponse(
                 scheduledCall.request,
                 executionError instanceof Error
                   ? executionError
                   : new Error(String(executionError)),
-                this.config.getGeminiClient(),
-                signal,
               ),
             );
           });

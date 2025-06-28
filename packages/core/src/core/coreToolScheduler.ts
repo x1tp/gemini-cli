@@ -17,7 +17,6 @@ import {
   Config,
   logToolCall,
   ToolCallEvent,
-  GeminiClient,
 } from '../index.js';
 import { Part, PartListUnion } from '@google/genai';
 import { getResponseTextFromParts } from '../utils/generateContentResponseUtilities.js';
@@ -26,7 +25,7 @@ import {
   ModifyContext,
   modifyWithEditor,
 } from '../tools/modifiable-tool.js';
-import { summarizeToolOutput } from '../utils/promptSummarizer.js';
+import { summarizeToolOutput } from '../utils/toolOutputSummarizer.js';
 
 export type ValidatingToolCall = {
   status: 'validating';
@@ -213,20 +212,18 @@ export async function convertToFunctionResponse(
 const createErrorResponse = (
   request: ToolCallRequestInfo,
   error: Error,
-): ToolCallResponseInfo => {
-  return {
-    callId: request.callId,
-    error,
-    responseParts: {
-      functionResponse: {
-        id: request.callId,
-        name: request.name,
-        response: { error: error.message },
-      },
+): ToolCallResponseInfo => ({
+  callId: request.callId,
+  error,
+  responseParts: {
+    functionResponse: {
+      id: request.callId,
+      name: request.name,
+      response: { error: error.message },
     },
-    resultDisplay: error.message,
-  };
-};
+  },
+  resultDisplay: error.message,
+});
 
 interface CoreToolSchedulerOptions {
   toolRegistry: Promise<ToolRegistry>;

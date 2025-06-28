@@ -17,7 +17,7 @@ import {
 import { Content } from '@google/genai';
 import { GeminiClient } from '../core/client.js';
 import { Config as OriginalConfig } from '../config/config.js';
-import { summarizeToolOutput } from './promptSummarizer.js';
+import { summarizeToolOutput } from './toolOutputSummarizer.js';
 import { GeminiChat } from '../core/geminiChat.js';
 
 // Mock dependencies

@@ -4,8 +4,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Content, SchemaUnion, Type } from '@google/genai';
+import {
+  Content,
+  GenerateContentConfig,
+  SchemaUnion,
+  Type,
+} from '@google/genai';
 import { GeminiClient } from '../core/client.js';
+import { DEFAULT_GEMINI_FLASH_MODEL } from '../config/models.js';
+
+const toolOutputSummarizerModel = DEFAULT_GEMINI_FLASH_MODEL;
+const toolOutputSummarizerConfig: GenerateContentConfig = {
+  thinkingConfig: {
+    thinkingBudget: 0,
+  },
+};
 
 const SUMMARIZE_TOOL_OUTPUT_TEMPLATE = `Summarize the following tool output to be a maximum of {maxLength} characters. The summary should be concise and capture the main points of the tool output.
 
@@ -76,6 +89,8 @@ export async function summarizeToolOutput(
       contents,
       RESPONSE_SCHEMA,
       abortSignal,
+      toolOutputSummarizerModel,
+      toolOutputSummarizerConfig,
     )) as unknown as { summary: string };
     if (parsedResponse && parsedResponse.summary) {
       return parsedResponse.summary;

@@ -178,7 +178,12 @@ export async function convertToFunctionResponse(
         getResponseTextFromParts(
           contentToProcess.functionResponse.response.content as Part[],
         ) || '';
-      return createFunctionResponsePart(callId, toolName, stringifiedOutput);
+      const summarizedContent = await summarizeToolOutput(
+        stringifiedOutput,
+        geminiClient,
+        abortSignal,
+      );
+      return createFunctionResponsePart(callId, toolName, summarizedContent);
     }
     // It's a functionResponse that we should pass through as is.
     return contentToProcess;

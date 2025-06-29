@@ -33,10 +33,7 @@ Here is the history of the conversation:
 Text to summarize:
 "{textToSummarize}"
 
-The summary string should be in the following format:
-<summary></summary>
-<error></error>
-<warning></warning>
+The summary string should first contain an overall summarization of text followed by the full stack trace of errors and warnings in the tool output.
 
 Respond *only* in JSON format according to the following schema. Do not include any text outside the JSON structure.
 \`\`\`json

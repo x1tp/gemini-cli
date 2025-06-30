@@ -40,7 +40,7 @@ In your project's root directory, create or open the [`.gemini/settings.json` fi
                 "ghcr.io/github/github-mcp-server"
             ],
             "env": {
-            "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+              "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
             }
         }
     }

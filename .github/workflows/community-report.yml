@@ -8,12 +8,19 @@ on:
       days:
         description: 'Number of days to look back for the report'
         required: true
-        default: '7'
+        default: 7
+        type: number
+      debug:
+        description: 'Enable debug output'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   generate-report:
     name: Generate Report 📝
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # Ensures bash 5.1+ with associative arrays
+    timeout-minutes: 25
     permissions:
       issues: write
       pull-requests: read
@@ -29,139 +36,68 @@ jobs:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.PRIVATE_KEY }}
 
+      - name: 📁 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: � Install Newer Bash (if needed)
+        if: runner.os == 'Linux'
+        run: |
+          # Check if we need to install a newer bash
+          if [[ ${BASH_VERSION%%.*} -lt 4 ]]; then
+            echo "Installing newer bash version..."
+            sudo apt-get update
+            sudo apt-get install -y bash
+          fi
+
+      - name: �🐚 Setup Bash
+        run: |
+          echo "=== Current Bash Information ==="
+          echo "Bash version: $BASH_VERSION"
+          echo "Bash location: $(which bash)"
+          bash --version
+          
+          echo "=== Checking Bash Version Requirements ==="
+          BASH_MAJOR_VERSION=${BASH_VERSION%%.*}
+          echo "Major version: $BASH_MAJOR_VERSION"
+          
+          if [[ $BASH_MAJOR_VERSION -lt 4 ]]; then
+            echo "❌ Bash version 4+ required, current: $BASH_VERSION"
+            echo "Attempting to install newer bash..."
+            
+            # Update package list and install newer bash
+            sudo apt-get update
+            sudo apt-get install -y bash
+            
+            # Check if installation was successful
+            NEW_BASH_VERSION=$(bash --version | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+            echo "New bash version: $NEW_BASH_VERSION"
+          else
+            echo "✅ Bash version $BASH_VERSION is compatible"
+          fi
+          
+          echo "=== Final Bash Information ==="
+          bash --version
+
       - name: Generate Report 📜
         id: report
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.generate_token.outputs.token }}
           REPO: ${{ github.repository }}
           DAYS: ${{ github.event.inputs.days || '7' }}
+          DEBUG: ${{ github.event.inputs.debug || 'false' }}
         run: |
-          set -e
-
-          START_DATE=$(date -u -d "$DAYS days ago" +'%Y-%m-%d')
-          END_DATE=$(date -u +'%Y-%m-%d')
-          echo "⏳ Generating report for contributions from $START_DATE to $END_DATE..."
-
-          declare -A author_is_googler
-          check_googler_status() {
-              local author=$1
-              if [[ "$author" == *"[bot]" ]]; then
-                  author_is_googler[$author]=1
-                  return 1
-              fi
-              if [[ -v "author_is_googler[$author]" ]]; then
-                  return ${author_is_googler[$author]}
-              fi
-
-              if gh api "orgs/googlers/members/$author" --silent 2>/dev/null; then
-                  echo "🧑‍💻 $author is a Googler."
-                  author_is_googler[$author]=0
-              else
-                  echo "🌍 $author is a community contributor."
-                  author_is_googler[$author]=1
-              fi
-              return ${author_is_googler[$author]}
-          }
-
-          googler_issues=0
-          non_googler_issues=0
-          googler_prs=0
-          non_googler_prs=0
-
-          echo "🔎 Fetching issues and pull requests..."
-          ITEMS_JSON=$(gh search issues --repo "$REPO" "created:>$START_DATE" --json author,isPullRequest --limit 1000)
-
-          for row in $(echo "${ITEMS_JSON}" | jq -r '.[] | @base64'); do
-              _jq() {
-                  echo ${row} | base64 --decode | jq -r ${1}
-              }
-              author=$(_jq '.author.login')
-              is_pr=$(_jq '.isPullRequest')
-
-              if [[ -z "$author" || "$author" == "null" ]]; then
-                continue
-              fi
-
-              if check_googler_status "$author"; then
-                  if [[ "$is_pr" == "true" ]]; then
-                      ((googler_prs++))
-                  else
-                      ((googler_issues++))
-                  fi
-              else
-                  if [[ "$is_pr" == "true" ]]; then
-                      ((non_googler_prs++))
-                  else
-                      ((non_googler_issues++))
-                  fi
-              fi
-          done
-
-          googler_discussions=0
-          non_googler_discussions=0
-
-          echo "🗣️ Fetching discussions..."
-          DISCUSSION_QUERY='''
-          query($q: String!) {
-            search(query: $q, type: DISCUSSION, first: 100) {
-              nodes {
-                ... on Discussion {
-                  author {
-                    login
-                  }
-                }
-              }
-            }
-          }'''
-          DISCUSSIONS_JSON=$(gh api graphql -f q="repo:$REPO created:>$START_DATE" -f query="$DISCUSSION_QUERY")
-
-          for row in $(echo "${DISCUSSIONS_JSON}" | jq -r '.data.search.nodes[] | @base64'); do
-              _jq() {
-                  echo ${row} | base64 --decode | jq -r ${1}
-              }
-              author=$(_jq '.author.login')
-
-              if [[ -z "$author" || "$author" == "null" ]]; then
-                continue
-              fi
-
-              if check_googler_status "$author"; then
-                  ((googler_discussions++))
-              else
-                  ((non_googler_discussions++))
-              fi
-          done
-
-          echo "✍️ Generating report content..."
-          REPORT_TITLE="Community Contribution Report: $START_DATE to $END_DATE"
-          TOTAL_ISSUES=$((googler_issues + non_googler_issues))
-          TOTAL_PRS=$((googler_prs + non_googler_prs))
-          TOTAL_DISCUSSIONS=$((googler_discussions + non_googler_discussions))
-
-          REPORT_BODY=$(cat <<EOF
-          ### 💖 Community Contribution Report
-
-          **Period:** $START_DATE to $END_DATE
-
-          | Category | Googlers | Community | Total |
-          |---|---:|---:|---:|
-          | **Issues** | $googler_issues | $non_googler_issues | **$TOTAL_ISSUES** |
-          | **Pull Requests** | $googler_prs | $non_googler_prs | **$TOTAL_PRS** |
-          | **Discussions** | $googler_discussions | $non_googler_discussions | **$TOTAL_DISCUSSIONS** |
-
-          _This report was generated automatically by a GitHub Action._
-          EOF
-          )
-
-          echo "report_body<<EOF" >> $GITHUB_OUTPUT
-          echo "$REPORT_BODY" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-          echo "📊 Community Contribution Report:"
-          echo "$REPORT_BODY"
+          # Ensure we're using bash 4+ features
+          if [[ ${BASH_VERSION%%.*} -lt 4 ]]; then
+            echo "❌ Bash version 4+ required for associative arrays"
+            exit 1
+          fi
+          
+          ./.github/scripts/generate-community-report.sh
 
       - name: 🤖 Get Insights from Report
         if: steps.report.outputs.report_body != ''
+        id: insights
         uses: google-gemini/gemini-cli-action@41c0f1b3cbd1a0b284251bd1aac034edd07a3a2f
         env:
           GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
@@ -181,8 +117,55 @@ jobs:
               ]
             }
           prompt: |
-            You are a helpful assistant that analyzes community contribution reports.
-            Based on the following report, please provide a brief summary and highlight any interesting trends or potential areas for improvement.
+            You are a helpful assistant that analyzes community contribution reports for open source projects.
+            
+            Based on the following raw data, create a comprehensive community insights report that includes:
+            
+            1. **Executive Summary**: Brief overview of community activity
+            2. **Key Findings**: Main insights from the data
+            3. **Contribution Patterns**: Analysis of issue/PR/discussion trends
+            4. **Community Health**: Assessment of engagement levels
+            5. **Actionable Recommendations**: Specific steps to improve community engagement
+            6. **Notable Trends**: Any interesting patterns or changes
+            
+            Format your response as a well-structured markdown report that can be shared with stakeholders.
+            Include the raw data table at the end for reference.
+            
+            Keep the tone professional but engaging, and focus on actionable insights.
 
-            Report:
+            Raw Data:
             ${{ steps.report.outputs.report_body }}
+
+      - name: 📝 Create Issue with Report
+        if: steps.insights.outputs.response != '' && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ steps.generate_token.outputs.token }}
+        run: |
+          # # Create an issue with the weekly report
+          # gh issue create \
+          #   --title "📊 Weekly Community Insights Report - $(date +'%Y-%m-%d')" \
+          #   --body "${{ steps.insights.outputs.response }}" \
+          #   --label "report,community,automated,insights" \
+          #   --repo ${{ github.repository }}
+          echo "Issue posting skipped (not configured)"
+
+      - name: 💬 Post to Discussions (Optional)
+        if: steps.insights.outputs.response != '' && github.event_name == 'schedule'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.generate_token.outputs.token }}
+        run: |
+          # Optionally post to discussions
+          # Uncomment the following lines if you want to post to discussions
+          # gh api graphql -f query='
+          #   mutation($repositoryId: ID!, $categoryId: ID!, $body: String!, $title: String!) {
+          #     createDiscussion(input: {repositoryId: $repositoryId, categoryId: $categoryId, body: $body, title: $title}) {
+          #       discussion {
+          #         id
+          #       }
+          #     }
+          #   }' -f repositoryId="$(gh api repos/${{ github.repository }} --jq .node_id)" \
+          #     -f categoryId="CATEGORY_ID_HERE" \
+          #     -f title="📊 Weekly Community Insights Report - $(date +'%Y-%m-%d')" \
+          #     -f body="${{ steps.insights.outputs.response }}"
+          echo "Discussion posting skipped (not configured)"

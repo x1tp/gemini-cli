@@ -178,10 +178,6 @@ vi.mock('./components/Tips.js', () => ({
   Tips: vi.fn(() => null),
 }));
 
-vi.mock('./utils/updateCheck.js', () => ({
-  checkForUpdates: vi.fn().mockResolvedValue(null),
-}));
-
 describe('App UI', () => {
   let mockConfig: MockServerConfig;
   let mockSettings: LoadedSettings;

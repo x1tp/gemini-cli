@@ -37,22 +37,14 @@ async function doCheckForUpdates(): Promise<string | null> {
 }
 
 export async function checkForUpdates(): Promise<string | null> {
-  try {
-    return await new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        reject(new Error('Update check timed out'));
-      }, CHECK_FOR_UPDATES_TIMEOUT_MS);
+  const timeoutPromise = new Promise<string | null>((_, reject) => {
+    setTimeout(() => {
+      reject(new Error('Update check timed out'));
+    }, CHECK_FOR_UPDATES_TIMEOUT_MS);
+  });
 
-      doCheckForUpdates()
-        .then((result) => {
-          clearTimeout(timeoutId);
-          resolve(result);
-        })
-        .catch((err) => {
-          clearTimeout(timeoutId);
-          reject(err);
-        });
-    });
+  try {
+    return await Promise.race([doCheckForUpdates(), timeoutPromise]);
   } catch (e) {
     // In case of timeout or any other error, log a warning but do not
     // disrupt the application.

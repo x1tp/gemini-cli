@@ -18,6 +18,7 @@ import {
 import { LoadedSettings, SettingsFile, Settings } from '../config/settings.js';
 import process from 'node:process';
 import { Tips } from './components/Tips.js';
+import { checkForUpdates } from './utils/updateCheck.js';
 
 // Define a more complete mock server config based on actual Config
 interface MockServerConfig {
@@ -176,6 +177,10 @@ vi.mock('../config/config.js', async (importOriginal) => {
 
 vi.mock('./components/Tips.js', () => ({
   Tips: vi.fn(() => null),
+}));
+
+vi.mock('./utils/updateCheck.js', () => ({
+  checkForUpdates: vi.fn().mockResolvedValue(null),
 }));
 
 describe('App UI', () => {
@@ -410,6 +415,26 @@ describe('App UI', () => {
     currentUnmount = unmount;
     await Promise.resolve();
     expect(vi.mocked(Tips)).not.toHaveBeenCalled();
+  });
+
+  it('should not crash if checkForUpdates rejects', async () => {
+    const mockedCheckForUpdates = vi.mocked(checkForUpdates);
+    mockedCheckForUpdates.mockRejectedValue(new Error('Network error'));
+
+    const { lastFrame, unmount } = render(
+      <App
+        config={mockConfig as unknown as ServerConfig}
+        settings={mockSettings}
+      />,
+    );
+    currentUnmount = unmount;
+
+    await Promise.resolve();
+
+    // Ensure the app still renders something.
+    expect(lastFrame()).not.toBe('');
+    // And that no update message is shown.
+    expect(lastFrame()).not.toContain('update available');
   });
 
   describe('when no theme is set', () => {

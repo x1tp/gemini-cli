@@ -93,7 +93,14 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
   const { stdout } = useStdout();
 
   useEffect(() => {
-    checkForUpdates().then(setUpdateMessage);
+    checkForUpdates()
+      .then(setUpdateMessage)
+      .catch(() => {
+        // The `checkForUpdates` function is designed to handle its own
+        // errors and timeouts, so this catch is a safeguard.
+        // We don't want to distract the user with an error message
+        // for a non-critical feature, so we fail silently.
+      });
   }, []);
 
   const { history, addItem, clearItems, loadHistory } = useHistory();

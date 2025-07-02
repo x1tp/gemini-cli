@@ -53,8 +53,12 @@ export async function checkForUpdates(): Promise<string | null> {
           reject(err);
         });
     });
-  } catch (_e) {
-    // In case of timeout or any other error, just fail silently.
+  } catch (e) {
+    // In case of timeout or any other error, log a warning but do not
+    // disrupt the application.
+    console.warn(
+      `Failed to check for updates: ${e instanceof Error ? e.message : String(e)}`,
+    );
     return null;
   }
 }

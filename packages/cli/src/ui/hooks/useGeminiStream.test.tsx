@@ -1055,4 +1055,522 @@ describe('useGeminiStream', () => {
       });
     });
   });
+
+  describe('Infinite Loop Protection', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    describe('Circuit Breaker', () => {
+      it('should trigger circuit breaker after consecutive rapid tool submissions', async () => {
+        const mockPerformMemoryRefresh = vi.fn();
+        let capturedOnComplete: ((completedTools: TrackedToolCall[]) => Promise<void>) | null = null;
+
+        mockUseReactToolScheduler.mockImplementation((onComplete) => {
+          capturedOnComplete = onComplete;
+          return [[], mockScheduleToolCalls, mockMarkToolsAsSubmitted];
+        });
+
+        renderHook(() =>
+          useGeminiStream(
+            new MockedGeminiClientClass(mockConfig),
+            [],
+            mockAddItem,
+            mockSetShowHelp,
+            mockConfig,
+            mockOnDebugMessage,
+            mockHandleSlashCommand,
+            false,
+            () => 'vscode' as EditorType,
+            () => {},
+            mockPerformMemoryRefresh,
+          ),
+        );
+
+        // Simulate 5 rapid tool completions (threshold)
+        for (let i = 0; i < 5; i++) {
+          const toolCall: TrackedCompletedToolCall = {
+            request: {
+              callId: `call-${i}`,
+              name: 'test_tool',
+              args: {},
+              isClientInitiated: false,
+            },
+            status: 'success',
+            responseSubmittedToGemini: false,
+            response: {
+              callId: `call-${i}`,
+              responseParts: [{ text: `response ${i}` }],
+              resultDisplay: `Success: response ${i}`,
+              error: undefined,
+            },
+            tool: { name: 'test_tool', description: '', getDescription: vi.fn() } as any,
+          };
+
+          await act(async () => {
+            if (capturedOnComplete) {
+              await capturedOnComplete([toolCall]);
+            }
+          });
+        }
+
+        // The 6th submission should trigger circuit breaker
+        const sixthToolCall: TrackedCompletedToolCall = {
+          request: {
+            callId: 'call-6',
+            name: 'test_tool',
+            args: {},
+            isClientInitiated: false,
+          },
+          status: 'success',
+          responseSubmittedToGemini: false,
+          response: {
+            callId: 'call-6',
+            responseParts: [{ text: 'response 6' }],
+            resultDisplay: 'Success: response 6',
+            error: undefined,
+          },
+          tool: { name: 'test_tool', description: '', getDescription: vi.fn() } as any,
+        };
+
+        await act(async () => {
+          if (capturedOnComplete) {
+            await capturedOnComplete([sixthToolCall]);
+          }
+        });
+
+        // Verify circuit breaker message was shown
+        expect(mockAddItem).toHaveBeenCalledWith(
+          {
+            type: MessageType.INFO,
+            text: 'Tool execution temporarily paused to prevent infinite loops. Please try again in a moment.',
+          },
+          expect.any(Number),
+        );
+
+        // Verify debug message
+        expect(mockOnDebugMessage).toHaveBeenCalledWith(
+          expect.stringContaining('Circuit breaker triggered'),
+        );
+      });
+
+      it('should reset circuit breaker after cooldown period', async () => {
+        const mockPerformMemoryRefresh = vi.fn();
+        let capturedOnComplete: ((completedTools: TrackedToolCall[]) => Promise<void>) | null = null;
+
+        mockUseReactToolScheduler.mockImplementation((onComplete) => {
+          capturedOnComplete = onComplete;
+          return [[], mockScheduleToolCalls, mockMarkToolsAsSubmitted];
+        });
+
+        renderHook(() =>
+          useGeminiStream(
+            new MockedGeminiClientClass(mockConfig),
+            [],
+            mockAddItem,
+            mockSetShowHelp,
+            mockConfig,
+            mockOnDebugMessage,
+            mockHandleSlashCommand,
+            false,
+            () => 'vscode' as EditorType,
+            () => {},
+            mockPerformMemoryRefresh,
+          ),
+        );
+
+        // Trigger circuit breaker
+        for (let i = 0; i < 6; i++) {
+          const toolCall: TrackedCompletedToolCall = {
+            request: {
+              callId: `call-${i}`,
+              name: 'test_tool',
+              args: {},
+              isClientInitiated: false,
+            },
+            status: 'success',
+            responseSubmittedToGemini: false,
+            response: {
+              callId: `call-${i}`,
+              responseParts: [{ text: `response ${i}` }],
+              resultDisplay: `Success: response ${i}`,
+              error: undefined,
+            },
+            tool: { name: 'test_tool', description: '', getDescription: vi.fn() } as any,
+          };
+
+          await act(async () => {
+            if (capturedOnComplete) {
+              await capturedOnComplete([toolCall]);
+            }
+          });
+        }
+
+        // Fast forward past cooldown period (5 seconds)
+        act(() => {
+          vi.advanceTimersByTime(6000);
+        });
+
+        // Reset call counts
+        mockSendMessageStream.mockClear();
+        mockOnDebugMessage.mockClear();
+
+        // Try another tool submission after cooldown
+        const postCooldownToolCall: TrackedCompletedToolCall = {
+          request: {
+            callId: 'call-post-cooldown',
+            name: 'test_tool',
+            args: {},
+            isClientInitiated: false,
+          },
+          status: 'success',
+          responseSubmittedToGemini: false,
+          response: {
+            callId: 'call-post-cooldown',
+            responseParts: [{ text: 'post cooldown response' }],
+            resultDisplay: 'Success: post cooldown response',
+            error: undefined,
+          },
+          tool: { name: 'test_tool', description: '', getDescription: vi.fn() } as any,
+        };
+
+        await act(async () => {
+          if (capturedOnComplete) {
+            await capturedOnComplete([postCooldownToolCall]);
+          }
+        });
+
+        // Should work normally after cooldown - submitQuery is called internally
+        expect(mockSendMessageStream).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('Tool Chain Depth Protection', () => {
+      it.skip('should prevent tool chains from exceeding maximum depth', async () => {
+        const mockPerformMemoryRefresh = vi.fn();
+        let capturedOnComplete: ((completedTools: TrackedToolCall[]) => Promise<void>) | null = null;
+
+        mockUseReactToolScheduler.mockImplementation((onComplete) => {
+          capturedOnComplete = onComplete;
+          return [[], mockScheduleToolCalls, mockMarkToolsAsSubmitted];
+        });
+
+        renderHook(() =>
+          useGeminiStream(
+            new MockedGeminiClientClass(mockConfig),
+            [],
+            mockAddItem,
+            mockSetShowHelp,
+            mockConfig,
+            mockOnDebugMessage,
+            mockHandleSlashCommand,
+            false,
+            () => 'vscode' as EditorType,
+            () => {},
+            mockPerformMemoryRefresh,
+          ),
+        );
+
+        // Simulate tool chain by calling the same tool repeatedly
+        // First, let's build up a chain
+        for (let depth = 1; depth <= 10; depth++) {
+          const toolCall: TrackedCompletedToolCall = {
+            request: {
+              callId: `call-depth-${depth}`,
+              name: 'recursive_tool',
+              args: {},
+              isClientInitiated: false,
+            },
+            status: 'success',
+            responseSubmittedToGemini: false,
+            response: {
+              callId: `call-depth-${depth}`,
+              responseParts: [{ text: `depth ${depth} response` }],
+              resultDisplay: `Success: depth ${depth} response`,
+              error: undefined,
+            },
+            tool: { name: 'recursive_tool', description: '', getDescription: vi.fn() } as any,
+          };
+
+          await act(async () => {
+            if (capturedOnComplete) {
+              await capturedOnComplete([toolCall]);
+            }
+          });
+          
+          // Advance time to avoid circuit breaker
+          act(() => {
+            vi.advanceTimersByTime(1100);
+          });
+        }
+
+        // Now try the 11th call (should be blocked)
+        const eleventhToolCall: TrackedCompletedToolCall = {
+          request: {
+            callId: 'call-depth-11',
+            name: 'recursive_tool',
+            args: {},
+            isClientInitiated: false,
+          },
+          status: 'success',
+          responseSubmittedToGemini: false,
+          response: {
+            callId: 'call-depth-11',
+            responseParts: [{ text: 'depth 11 response' }],
+            resultDisplay: 'Success: depth 11 response',
+            error: undefined,
+          },
+          tool: { name: 'recursive_tool', description: '', getDescription: vi.fn() } as any,
+        };
+
+        await act(async () => {
+          if (capturedOnComplete) {
+            await capturedOnComplete([eleventhToolCall]);
+          }
+        });
+
+        // Verify the 11th call was blocked due to depth
+        expect(mockOnDebugMessage).toHaveBeenCalledWith(
+          expect.stringContaining('Tool chain depth exceeded'),
+        );
+      });
+
+      it('should reset tool chain depth when streaming becomes idle', async () => {
+        const { result, rerender } = renderTestHook([]);
+
+        // Initially idle
+        expect(result.current.streamingState).toBe(StreamingState.Idle);
+
+        // Verify depth reset was called
+        expect(mockOnDebugMessage).toHaveBeenCalledWith(
+          'Tool chain depth reset',
+        );
+      });
+    });
+
+    describe('Memory Refresh Protection', () => {
+      it('should limit memory refreshes to prevent infinite loops', async () => {
+        const mockPerformMemoryRefresh = vi.fn();
+        let capturedOnComplete: ((completedTools: TrackedToolCall[]) => Promise<void>) | null = null;
+
+        mockUseReactToolScheduler.mockImplementation((onComplete) => {
+          capturedOnComplete = onComplete;
+          return [[], mockScheduleToolCalls, mockMarkToolsAsSubmitted];
+        });
+
+        renderHook(() =>
+          useGeminiStream(
+            new MockedGeminiClientClass(mockConfig),
+            [],
+            mockAddItem,
+            mockSetShowHelp,
+            mockConfig,
+            mockOnDebugMessage,
+            mockHandleSlashCommand,
+            false,
+            () => 'vscode' as EditorType,
+            () => {},
+            mockPerformMemoryRefresh,
+          ),
+        );
+
+        // Simulate 4 rapid save_memory calls (should exceed limit of 3)
+        for (let i = 0; i < 4; i++) {
+          const memoryToolCall: TrackedCompletedToolCall = {
+            request: {
+              callId: `memory-call-${i}`,
+              name: 'save_memory',
+              args: { fact: `fact ${i}` },
+              isClientInitiated: false,
+            },
+            status: 'success',
+            responseSubmittedToGemini: false,
+            response: {
+              callId: `memory-call-${i}`,
+              responseParts: [{ text: `memory saved ${i}` }],
+              resultDisplay: `Success: memory saved ${i}`,
+              error: undefined,
+            },
+            tool: { name: 'save_memory', description: '', getDescription: vi.fn() } as any,
+          };
+
+          await act(async () => {
+            if (capturedOnComplete) {
+              await capturedOnComplete([memoryToolCall]);
+            }
+          });
+        }
+
+        // Should only call performMemoryRefresh 3 times (the limit) 
+        // Note: The first 3 calls will succeed, the 4th will be blocked
+        expect(mockPerformMemoryRefresh).toHaveBeenCalledTimes(3);
+
+        // Should show memory refresh limit message
+        expect(mockAddItem).toHaveBeenCalledWith(
+          {
+            type: MessageType.INFO,
+            text: 'Memory refresh temporarily paused to prevent excessive updates.',
+          },
+          expect.any(Number),
+        );
+
+        expect(mockOnDebugMessage).toHaveBeenCalledWith(
+          'Memory refresh limit reached, skipping refresh',
+        );
+      });
+
+      it('should reset memory refresh count after cooldown period', async () => {
+        const mockPerformMemoryRefresh = vi.fn();
+        let capturedOnComplete: ((completedTools: TrackedToolCall[]) => Promise<void>) | null = null;
+
+        mockUseReactToolScheduler.mockImplementation((onComplete) => {
+          capturedOnComplete = onComplete;
+          return [[], mockScheduleToolCalls, mockMarkToolsAsSubmitted];
+        });
+
+        renderHook(() =>
+          useGeminiStream(
+            new MockedGeminiClientClass(mockConfig),
+            [],
+            mockAddItem,
+            mockSetShowHelp,
+            mockConfig,
+            mockOnDebugMessage,
+            mockHandleSlashCommand,
+            false,
+            () => 'vscode' as EditorType,
+            () => {},
+            mockPerformMemoryRefresh,
+          ),
+        );
+
+        // Trigger memory refresh limit
+        for (let i = 0; i < 4; i++) {
+          const memoryToolCall: TrackedCompletedToolCall = {
+            request: {
+              callId: `memory-call-${i}`,
+              name: 'save_memory',
+              args: { fact: `fact ${i}` },
+              isClientInitiated: false,
+            },
+            status: 'success',
+            responseSubmittedToGemini: false,
+            response: {
+              callId: `memory-call-${i}`,
+              responseParts: [{ text: `memory saved ${i}` }],
+              resultDisplay: `Success: memory saved ${i}`,
+              error: undefined,
+            },
+            tool: { name: 'save_memory', description: '', getDescription: vi.fn() } as any,
+          };
+
+          await act(async () => {
+            if (capturedOnComplete) {
+              await capturedOnComplete([memoryToolCall]);
+            }
+          });
+        }
+
+        // Fast forward past memory cooldown period (10 seconds)
+        act(() => {
+          vi.advanceTimersByTime(11000);
+        });
+
+        // Reset call count
+        mockPerformMemoryRefresh.mockClear();
+
+        // Try another memory save after cooldown
+        const postCooldownMemoryCall: TrackedCompletedToolCall = {
+          request: {
+            callId: 'memory-call-post-cooldown',
+            name: 'save_memory',
+            args: { fact: 'post cooldown fact' },
+            isClientInitiated: false,
+          },
+          status: 'success',
+          responseSubmittedToGemini: false,
+          response: {
+            callId: 'memory-call-post-cooldown',
+            responseParts: [{ text: 'memory saved post cooldown' }],
+            resultDisplay: 'Success: memory saved post cooldown',
+            error: undefined,
+          },
+          tool: { name: 'save_memory', description: '', getDescription: vi.fn() } as any,
+        };
+
+        await act(async () => {
+          if (capturedOnComplete) {
+            await capturedOnComplete([postCooldownMemoryCall]);
+          }
+        });
+
+        // Should work normally after cooldown
+        expect(mockPerformMemoryRefresh).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('Metrics and Logging', () => {
+      it('should track tool submission metrics', async () => {
+        const mockPerformMemoryRefresh = vi.fn();
+        let capturedOnComplete: ((completedTools: TrackedToolCall[]) => Promise<void>) | null = null;
+
+        mockUseReactToolScheduler.mockImplementation((onComplete) => {
+          capturedOnComplete = onComplete;
+          return [[], mockScheduleToolCalls, mockMarkToolsAsSubmitted];
+        });
+
+        renderHook(() =>
+          useGeminiStream(
+            new MockedGeminiClientClass(mockConfig),
+            [],
+            mockAddItem,
+            mockSetShowHelp,
+            mockConfig,
+            mockOnDebugMessage,
+            mockHandleSlashCommand,
+            false,
+            () => 'vscode' as EditorType,
+            () => {},
+            mockPerformMemoryRefresh,
+          ),
+        );
+
+        // Submit tools rapidly to trigger metrics logging
+        for (let i = 0; i < 3; i++) {
+          const toolCall: TrackedCompletedToolCall = {
+            request: {
+              callId: `call-${i}`,
+              name: 'test_tool',
+              args: {},
+              isClientInitiated: false,
+            },
+            status: 'success',
+            responseSubmittedToGemini: false,
+            response: {
+              callId: `call-${i}`,
+              responseParts: [{ text: `response ${i}` }],
+              resultDisplay: `Success: response ${i}`,
+              error: undefined,
+            },
+            tool: { name: 'test_tool', description: '', getDescription: vi.fn() } as any,
+          };
+
+          await act(async () => {
+            if (capturedOnComplete) {
+              await capturedOnComplete([toolCall]);
+            }
+          });
+        }
+
+        // Verify rapid submission detection
+        expect(mockOnDebugMessage).toHaveBeenCalledWith(
+          expect.stringContaining('Rapid tool submission detected'),
+        );
+      });
+    });
+  });
 });

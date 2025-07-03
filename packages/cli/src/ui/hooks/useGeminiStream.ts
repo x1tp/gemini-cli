@@ -74,6 +74,14 @@ enum StreamProcessingStatus {
  * Manages the Gemini stream, including user input, command processing,
  * API interaction, and tool call lifecycle.
  */
+// Infinite loop protection constants
+const CIRCUIT_BREAKER_THRESHOLD = 5; // Max consecutive submissions
+const CIRCUIT_BREAKER_WINDOW = 1000; // 1 second window
+const CIRCUIT_BREAKER_COOLDOWN = 5000; // 5 second cooldown
+const MAX_TOOL_CHAIN_DEPTH = 10;
+const MAX_MEMORY_REFRESHES = 3;
+const MEMORY_REFRESH_COOLDOWN = 10000; // 10 seconds
+
 export const useGeminiStream = (
   geminiClient: GeminiClient,
   history: HistoryItem[],
@@ -100,6 +108,23 @@ export const useGeminiStream = (
     useStateAndRef<HistoryItemWithoutId | null>(null);
   const processedMemoryToolsRef = useRef<Set<string>>(new Set());
   const logger = useLogger();
+
+  // Infinite loop protection state
+  const circuitBreakerRef = useRef({
+    consecutiveSubmissions: 0,
+    lastSubmissionTime: 0,
+    isOpen: false,
+  });
+  const toolCallDepthRef = useRef<Map<string, number>>(new Map());
+  const memoryRefreshRef = useRef({
+    count: 0,
+    lastRefreshTime: 0,
+  });
+  const toolSubmissionMetrics = useRef({
+    totalSubmissions: 0,
+    submissionsByTool: new Map<string, number>(),
+    rapidSubmissionEvents: 0,
+  });
   const gitService = useMemo(() => {
     if (!config.getProjectRoot()) {
       return;
@@ -151,6 +176,97 @@ export const useGeminiStream = (
     geminiClient,
   );
 
+  // Circuit breaker and infinite loop protection helpers
+  const handleCircuitBreakerTriggered = useCallback(() => {
+    addItem(
+      {
+        type: MessageType.INFO,
+        text: 'Tool execution temporarily paused to prevent infinite loops. Please try again in a moment.',
+      },
+      Date.now(),
+    );
+  }, [addItem]);
+
+  const resetCircuitBreaker = useCallback(() => {
+    circuitBreakerRef.current.isOpen = false;
+    circuitBreakerRef.current.consecutiveSubmissions = 0;
+    onDebugMessage('Circuit breaker reset');
+  }, [onDebugMessage]);
+
+  const checkCircuitBreaker = useCallback((): boolean => {
+    const now = Date.now();
+    const timeSinceLastSubmission = now - circuitBreakerRef.current.lastSubmissionTime;
+    
+    if (circuitBreakerRef.current.isOpen) {
+      if (timeSinceLastSubmission < CIRCUIT_BREAKER_COOLDOWN) {
+        onDebugMessage('Circuit breaker open - skipping tool submission');
+        return false;
+      }
+      resetCircuitBreaker();
+    }
+
+    // Rate limiting
+    if (timeSinceLastSubmission < CIRCUIT_BREAKER_WINDOW) {
+      circuitBreakerRef.current.consecutiveSubmissions++;
+      if (circuitBreakerRef.current.consecutiveSubmissions >= CIRCUIT_BREAKER_THRESHOLD) {
+        circuitBreakerRef.current.isOpen = true;
+        handleCircuitBreakerTriggered();
+        onDebugMessage(`Circuit breaker triggered - ${circuitBreakerRef.current.consecutiveSubmissions} consecutive tool submissions`);
+        return false;
+      }
+    } else {
+      circuitBreakerRef.current.consecutiveSubmissions = 1;
+    }
+
+    circuitBreakerRef.current.lastSubmissionTime = now;
+    return true;
+  }, [onDebugMessage, resetCircuitBreaker, handleCircuitBreakerTriggered]);
+
+  const checkToolChainDepth = useCallback((toolNames: string[]): boolean => {
+    const maxDepth = Math.max(
+      ...toolNames.map(name => toolCallDepthRef.current.get(name) || 0)
+    );
+    const newDepth = maxDepth + 1;
+    
+    if (newDepth > MAX_TOOL_CHAIN_DEPTH) {
+      onDebugMessage(`Tool chain depth exceeded (${newDepth}), breaking chain`);
+      addItem(
+        {
+          type: MessageType.INFO,
+          text: `Tool execution stopped to prevent infinite recursion (depth: ${newDepth}).`,
+        },
+        Date.now(),
+      );
+      return false;
+    }
+
+    // Update depth tracking
+    toolNames.forEach(name => {
+      toolCallDepthRef.current.set(name, newDepth);
+    });
+
+    return true;
+  }, [onDebugMessage, addItem]);
+
+  const updateToolMetrics = useCallback((toolNames: string[]) => {
+    toolSubmissionMetrics.current.totalSubmissions++;
+    toolNames.forEach(name => {
+      const count = toolSubmissionMetrics.current.submissionsByTool.get(name) || 0;
+      toolSubmissionMetrics.current.submissionsByTool.set(name, count + 1);
+    });
+
+    if (circuitBreakerRef.current.consecutiveSubmissions >= 3) {
+      toolSubmissionMetrics.current.rapidSubmissionEvents++;
+      onDebugMessage(`Rapid tool submission detected (${circuitBreakerRef.current.consecutiveSubmissions} consecutive)`);
+    }
+  }, [onDebugMessage]);
+
+  // Reset tool chain depth when conversation becomes idle
+  const resetToolChainDepth = useCallback(() => {
+    toolCallDepthRef.current.clear();
+    onDebugMessage('Tool chain depth reset');
+  }, [onDebugMessage]);
+
   const streamingState = useMemo(() => {
     if (toolCalls.some((tc) => tc.status === 'awaiting_approval')) {
       return StreamingState.WaitingForConfirmation;
@@ -171,8 +287,13 @@ export const useGeminiStream = (
     ) {
       return StreamingState.Responding;
     }
+    
+    // Reset tool chain depth when truly idle (no tool calls at all)
+    if (toolCalls.length === 0) {
+      resetToolChainDepth();
+    }
     return StreamingState.Idle;
-  }, [isResponding, toolCalls]);
+  }, [isResponding, toolCalls, resetToolChainDepth]);
 
   useInput((_input, key) => {
     if (streamingState === StreamingState.Responding && key.escape) {
@@ -608,7 +729,31 @@ export const useGeminiStream = (
       );
 
       if (newSuccessfulMemorySaves.length > 0) {
-        // Perform the refresh only if there are new ones.
+        // Memory refresh protection
+        const timeSinceLastRefresh = Date.now() - memoryRefreshRef.current.lastRefreshTime;
+        
+        if (timeSinceLastRefresh < MEMORY_REFRESH_COOLDOWN) {
+          if (memoryRefreshRef.current.count >= MAX_MEMORY_REFRESHES) {
+            onDebugMessage('Memory refresh limit reached, skipping refresh');
+            addItem(
+              {
+                type: MessageType.INFO,
+                text: 'Memory refresh temporarily paused to prevent excessive updates.',
+              },
+              Date.now(),
+            );
+            // Mark as processed to avoid retrying
+            newSuccessfulMemorySaves.forEach((t) =>
+              processedMemoryToolsRef.current.add(t.request.callId),
+            );
+            return;
+          }
+          memoryRefreshRef.current.count++;
+        } else {
+          memoryRefreshRef.current.count = 1;
+        }
+        
+        memoryRefreshRef.current.lastRefreshTime = Date.now();
         void performMemoryRefresh();
         // Mark them as processed so we don't do this again on the next render.
         newSuccessfulMemorySaves.forEach((t) =>
@@ -623,6 +768,20 @@ export const useGeminiStream = (
       if (geminiTools.length === 0) {
         return;
       }
+
+      // Circuit breaker check
+      if (!checkCircuitBreaker()) {
+        return;
+      }
+
+      // Tool chain depth check
+      const toolNames = geminiTools.map(t => t.request.name);
+      if (!checkToolChainDepth(toolNames)) {
+        return;
+      }
+
+      // Update metrics
+      updateToolMetrics(toolNames);
 
       // If all the tools were cancelled, don't submit a response to Gemini.
       const allToolsCancelled = geminiTools.every(
@@ -677,6 +836,11 @@ export const useGeminiStream = (
       markToolsAsSubmitted,
       geminiClient,
       performMemoryRefresh,
+      checkCircuitBreaker,
+      checkToolChainDepth,
+      updateToolMetrics,
+      onDebugMessage,
+      addItem,
     ],
   );
 

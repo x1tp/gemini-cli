@@ -25,7 +25,15 @@ function sendOpenFilesChangedNotification(
   recentFilesManager: RecentFilesManager,
 ) {
   const editor = vscode.window.activeTextEditor;
-  const filePath = editor ? editor.document.uri.fsPath : '';
+  if (!editor) {
+    return;
+  }
+
+  const filePath = editor.document.uri.fsPath;
+  const selection = editor.selection;
+  const cursor = selection.active;
+  const selectedText = editor.document.getText(selection);
+
   logger.appendLine(`Sending active file changed notification: ${filePath}`);
   const notification: JSONRPCNotification = {
     jsonrpc: '2.0',
@@ -33,6 +41,11 @@ function sendOpenFilesChangedNotification(
     params: {
       activeFile: filePath,
       recentOpenFiles: recentFilesManager.recentFiles,
+      cursor: {
+        line: cursor.line,
+        character: cursor.character,
+      },
+      selectedText,
     },
   };
   transport.send(notification);
@@ -58,7 +71,7 @@ export class IDEServer {
     const mcpServer = createMcpServer();
 
     const recentFilesManager = new RecentFilesManager(context);
-    const disposable = recentFilesManager.onDidChange(() => {
+    const onDidChangeSubscription = recentFilesManager.onDidChange(() => {
       for (const transport of Object.values(transports)) {
         sendOpenFilesChangedNotification(
           transport,
@@ -67,7 +80,18 @@ export class IDEServer {
         );
       }
     });
-    context.subscriptions.push(disposable);
+    context.subscriptions.push(onDidChangeSubscription);
+    const onDidChangeTextEditorSelectionSubscription =
+      vscode.window.onDidChangeTextEditorSelection(() => {
+        for (const transport of Object.values(transports)) {
+          sendOpenFilesChangedNotification(
+            transport,
+            this.logger,
+            recentFilesManager,
+          );
+        }
+      });
+    context.subscriptions.push(onDidChangeTextEditorSelectionSubscription);
 
     app.post('/mcp', async (req: Request, res: Response) => {
       const sessionId = req.headers[MCP_SESSION_ID_HEADER] as

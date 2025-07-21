@@ -80,18 +80,23 @@ export class IDEServer {
         );
       }
     });
-    context.subscriptions.push(onDidChangeSubscription);
+    let selectionChangeDebounceTimer: NodeJS.Timeout | undefined;
+
     const onDidChangeTextEditorSelectionSubscription =
       vscode.window.onDidChangeTextEditorSelection(() => {
-        for (const transport of Object.values(transports)) {
-          sendOpenFilesChangedNotification(
-            transport,
-            this.logger,
-            recentFilesManager,
-          );
+        if (selectionChangeDebounceTimer) {
+          clearTimeout(selectionChangeDebounceTimer);
         }
+        selectionChangeDebounceTimer = setTimeout(() => {
+          for (const transport of Object.values(transports)) {
+            sendOpenFilesChangedNotification(
+              transport,
+              this.logger,
+              recentFilesManager,
+            );
+          }
+        }, 500); // 500ms
       });
-    context.subscriptions.push(onDidChangeTextEditorSelectionSubscription);
 
     app.post('/mcp', async (req: Request, res: Response) => {
       const sessionId = req.headers[MCP_SESSION_ID_HEADER] as

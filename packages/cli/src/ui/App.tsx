@@ -160,7 +160,7 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
   const [modelSwitchedFromQuotaError, setModelSwitchedFromQuotaError] =
     useState<boolean>(false);
   const [userTier, setUserTier] = useState<UserTierId | undefined>(undefined);
-  const [activeFile, setOpenFiles] = useState<OpenFiles | undefined>();
+  const [openFiles, setOpenFiles] = useState<OpenFiles | undefined>();
 
   useEffect(() => {
     const unsubscribe = ideContext.subscribeToOpenFiles(setOpenFiles);
@@ -895,7 +895,7 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
                     </Text>
                   ) : (
                     <ContextSummaryDisplay
-                      activeFile={activeFile}
+                      openFiles={openFiles}
                       geminiMdFileCount={geminiMdFileCount}
                       contextFileNames={contextFileNames}
                       mcpServers={config.getMcpServers()}

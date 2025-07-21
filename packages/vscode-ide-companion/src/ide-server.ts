@@ -32,8 +32,12 @@ function sendOpenFilesChangedNotification(
   const filePath = editor.document.uri.fsPath;
   const selection = editor.selection;
   const cursor = selection.active;
-  const selectedText = editor.document.getText(selection);
-
+  const MAX_SELECTED_TEXT_LENGTH = 16384; // 16 KiB limit
+  let selectedText = editor.document.getText(selection);
+  if (selectedText.length > MAX_SELECTED_TEXT_LENGTH) {
+    selectedText =
+      selectedText.substring(0, MAX_SELECTED_TEXT_LENGTH) + '... [TRUNCATED]';
+  }
   logger.appendLine(`Sending active file changed notification: ${filePath}`);
   const notification: JSONRPCNotification = {
     jsonrpc: '2.0',
@@ -81,6 +85,7 @@ export class IDEServer {
       }
     });
     let selectionChangeDebounceTimer: NodeJS.Timeout | undefined;
+    context.subscriptions.push(onDidChangeSubscription);
 
     const onDidChangeTextEditorSelectionSubscription =
       vscode.window.onDidChangeTextEditorSelection(() => {
@@ -97,6 +102,8 @@ export class IDEServer {
           }
         }, 500); // 500ms
       });
+
+    context.subscriptions.push(onDidChangeTextEditorSelectionSubscription);
 
     app.post('/mcp', async (req: Request, res: Response) => {
       const sessionId = req.headers[MCP_SESSION_ID_HEADER] as

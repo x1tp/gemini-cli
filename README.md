@@ -16,6 +16,7 @@ With the Gemini CLI you can:
   Veo or Lyria](https://github.com/GoogleCloudPlatform/vertex-ai-creative-studio/tree/main/experiments/mcp-genmedia)
 - Ground your queries with the [Google Search](https://ai.google.dev/gemini-api/docs/grounding)
   tool, built into Gemini.
+- Combine responses from multiple models (Gemini, Qwen, Kimi) and let a small model vote on the best answer.
 
 ## Quickstart
 
@@ -87,6 +88,17 @@ The Vertex AI API provides a [free tier](https://cloud.google.com/vertex-ai/gene
    ```bash
    export GOOGLE_API_KEY="YOUR_API_KEY"
    export GOOGLE_GENAI_USE_VERTEXAI=true
+   ```
+
+### Use an OpenRouter API key:
+
+This enables optional multi-model support through the `models` configuration.
+
+1. Sign up at [OpenRouter](https://openrouter.ai) and copy your API key.
+2. Set it as an environment variable:
+
+   ```bash
+   export OPENROUTER_API_KEY="YOUR_OPENROUTER_KEY"
    ```
 
 3. (Optionally) Add a billing account on your project to get access to [higher usage limits](https://cloud.google.com/vertex-ai/generative-ai/docs/quotas)

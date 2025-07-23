@@ -72,6 +72,10 @@ In addition to a project settings file, a project's `.gemini` directory can cont
   - **Description:** Allows you to specify a list of core tool names that should be made available to the model. This can be used to restrict the set of built-in tools. See [Built-in Tools](../core/tools-api.md#built-in-tools) for a list of core tools. You can also specify command-specific restrictions for tools that support it, like the `ShellTool`. For example, `"coreTools": ["ShellTool(ls -l)"]` will only allow the `ls -l` command to be executed.
   - **Default:** All tools available for use by the Gemini model.
   - **Example:** `"coreTools": ["ReadFileTool", "GlobTool", "ShellTool(ls)"]`.
+- **`models`** (array of strings):
+  - **Description:** Configure multiple models to answer a prompt in parallel. When set, each model is invoked concurrently and a small model chooses the best response.
+  - **Default:** `["gemini-2.5-pro"]`
+  - **Example:** `"models": ["gemini-2.5-flash", "qwen/qwen3-coder", "moonshotai/kimi-k2"]`
 
 - **`excludeTools`** (array of strings):
   - **Description:** Allows you to specify a list of core tool names that should be excluded from the model. A tool listed in both `excludeTools` and `coreTools` is excluded. You can also specify command-specific restrictions for tools that support it, like the `ShellTool`. For example, `"excludeTools": ["ShellTool(rm -rf)"]` will block the `rm -rf` command.
@@ -296,6 +300,10 @@ The CLI automatically loads environment variables from an `.env` file. The loadi
   - Specifies the default Gemini model to use.
   - Overrides the hardcoded default
   - Example: `export GEMINI_MODEL="gemini-2.5-flash"`
+- **`OPENROUTER_API_KEY`**:
+  - API key for [OpenRouter](https://openrouter.ai). Required when using
+    additional models through the `models` configuration.
+  - Example: `export OPENROUTER_API_KEY="YOUR_OPENROUTER_KEY"`
 - **`GOOGLE_API_KEY`**:
   - Your Google Cloud API key.
   - Required for using Vertex AI in express mode.

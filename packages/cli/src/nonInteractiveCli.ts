@@ -49,6 +49,13 @@ export async function runNonInteractive(
   prompt_id: string,
 ): Promise<void> {
   await config.initialize();
+
+  const multi = config.getMultiModelClient();
+  if (multi) {
+    const text = await multi.generate(input);
+    if (text) console.log(text);
+    return;
+  }
   // Handle EPIPE errors when the output is piped to a command that closes early.
   process.stdout.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EPIPE') {

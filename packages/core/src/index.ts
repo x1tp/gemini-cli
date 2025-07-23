@@ -9,6 +9,8 @@ export * from './config/config.js';
 
 // Export Core Logic
 export * from './core/client.js';
+export * from './core/multiModelClient.js';
+export * from './core/openRouterClient.js';
 export * from './core/contentGenerator.js';
 export * from './core/geminiChat.js';
 export * from './core/logger.js';
